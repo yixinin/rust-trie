@@ -1,7 +1,7 @@
-pub mod node;
+pub mod nmap;
 pub mod trie;
 pub mod error;
-pub use node::TrieNode;
+pub use trie::TrieNode;
 
 #[cfg(test)]
 mod tests {
