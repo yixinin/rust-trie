@@ -1,14 +1,17 @@
 use crate::error::TrieError;
 use crate::trie::Container;
-use crate::TrieNode;
+use crate::trie::TrieNode;
+use std::cell::RefCell;
 use std::fmt::Debug;
+use std::ops::Deref;
+use std::rc::Rc;
 
 #[derive(Debug)]
 pub struct Nmap<T>
 where
     T: Default + Copy,
 {
-    buckets: [*const TrieNode<T>; 10],
+    buckets: [Option<Rc<RefCell<TrieNode<T>>>>; 10],
 }
 
 impl<T> std::fmt::Display for Nmap<T>
@@ -19,48 +22,32 @@ where
         let mut msg = String::from("[");
         for i in 0..10 {
             let mut a = String::from("");
-            if self.buckets[i].is_null() {
-                a = String::from("null")
+            if let Some(node) = self.buckets[i].clone() {
+                a = format!("{}", node.as_ptr() as u8);
             } else {
-                a = format!("{}", self.buckets[i] as u8);
+                a = String::from("null")
             }
             msg = format!("{},{}", msg, a);
         }
-        write!(f, "{}]", msg);
+        write!(f, "{}]", msg)?;
         Ok(())
     }
 }
 
 impl<T> Container<T> for Nmap<T>
 where
-    T: Default + Copy + Debug,
+    T: Default + Copy + Debug + PartialEq,
 {
     fn new() -> Nmap<T> {
         Nmap {
-            buckets: [
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-            ],
+            buckets: [None, None, None, None, None, None, None, None, None, None],
         }
     }
-    fn get(&self, k: u8) -> Result<*const TrieNode<T>, TrieError> {
-        let v = self.buckets[k as usize];
-        if v.is_null() {
-            return Err(TrieError::new(1, "not found"));
-        }
-        return Ok(v);
+    fn get(&self, k: u8) -> Option<Rc<RefCell<TrieNode<T>>>> {
+        self.buckets[k as usize].clone()
     }
 
-    fn set(&mut self, k: u8, v: TrieNode<T>) {
-        self.buckets[k as usize] = &v as *const TrieNode<T>;
-        ()
+    fn set(&mut self, k: u8, v: Option<Rc<RefCell<TrieNode<T>>>>) {
+        self.buckets[k as usize] = v;
     }
 }
