@@ -3,51 +3,58 @@ use crate::error::TrieError;
 use crate::nmap::Nmap;
 use std::borrow::BorrowMut;
 use std::fmt::Debug;
+use std::ptr::NonNull;
 
 pub trait Container<T>: Debug
 where
     T: Default + Copy,
 {
     fn new() -> Self;
-    fn set(&mut self, k: u8, v: TrieNode<T>);
-    fn get(&self, k: u8) -> Result<*const TrieNode<T>, TrieError>;
+    fn set(&mut self, k: u8, v: Option<NonNull<TrieNode<T>>>);
+    fn get(&self, k: u8) -> Option<NonNull<TrieNode<T>>>;
 }
 
-#[derive(Debug)]
-pub struct TrieNode<T>
-where
-    T: Copy + Default + Clone,
-{
-    key: Vec<u8>,
+pub struct TrieNode<T> {
+    key: Option<Vec<u8>>,
     node_key: u8,
-    pub val: T,
-    prev: *const TrieNode<T>,
-    next: *const TrieNode<T>,
-    children: *const crate::nmap::Nmap<T>,
+    val: Option<T>,
+    prev: Option<NonNull<TrieNode<T>>>,
+    next: Option<NonNull<TrieNode<T>>>,
+    children: Option<NonNull<Nmap<T>>>,
 }
 
 impl<T> TrieNode<T>
 where
     T: Default + Copy + std::fmt::Debug,
 {
-    pub fn default(k: u8) -> TrieNode<T> {
+    pub fn root() -> TrieNode<T> {
         TrieNode {
-            node_key: k,
-            val: T::default(),
-            key: Vec::new(),
-            prev: std::ptr::null(),
-            next: std::ptr::null(),
-            children: &Nmap::new() as *const Nmap<T>,
+            node_key: 0,
+            key: None,
+            val: None,
+            prev: None,
+            next: None,
+            children: Some(Box::leak(Box::new(Nmap::<T>::new())).into()),
         }
     }
-    pub fn new(k: u8, key: Vec<u8>, val: T) -> TrieNode<T> {
+    pub fn new(k: u8) -> TrieNode<T> {
         TrieNode {
             node_key: k,
-            val: val,
-            key: key,
-            prev: std::ptr::null(),
-            next: std::ptr::null(),
-            children: &Nmap::new() as *const Nmap<T>,
+            key: None,
+            val: None,
+            prev: None,
+            next: None,
+            children: Some(Box::leak(Box::new(Nmap::<T>::new())).into()),
+        }
+    }
+    pub fn leaf(k: u8, key: Vec<u8>, val: T) -> TrieNode<T> {
+        TrieNode {
+            node_key: k,
+            key: Some(key),
+            val: Some(val),
+            prev: None,
+            next: None,
+            children: None,
         }
     }
 }
@@ -57,9 +64,9 @@ where
     T: Copy + Default,
 {
     key_size: usize,
-    root: TrieNode<T>,
-    head: *const TrieNode<T>,
-    tail: *const TrieNode<T>,
+    root: Option<NonNull<TrieNode<T>>>,
+    head: Option<NonNull<TrieNode<T>>>,
+    tail: Option<NonNull<TrieNode<T>>>,
     size: usize,
 }
 
@@ -70,27 +77,41 @@ where
     pub fn new(key_size: usize) -> Trie<T> {
         Trie {
             key_size,
-            root: TrieNode::default(0),
-            head: std::ptr::null(),
-            tail: std::ptr::null(),
+            root: Some(Box::leak(Box::new(TrieNode::root())).into()),
+            head: None,
+            tail: None,
             size: 0,
         }
     }
 
     pub fn set(&mut self, key: Vec<u8>, val: T) -> Result<(), TrieError> {
-        if key.len() != self.key_size {
+        if key.clone().len() != self.key_size {
             return Err(TrieError::new(1, "key size not match"));
         }
 
-        let mut cur = &mut self.root as *const TrieNode<T>;
-        for k in key {
-            unsafe {
-                if let Err(err) = (*cur).children.as_ref().unwrap().get(k) {
-                    let node = TrieNode::new(k, Vec::new(), T::default());
-                    let children =&mut (*(*cur).children);
-                    children.set(k, node);
+        let endk = key.clone()[self.key_size - 1];
+
+        unsafe {
+            let mut cur = self.root;
+            if let Some(mut cur_node) = self.root {
+                for k in key.clone() {
+                    if let Some(mut children) = (*cur_node.as_ptr()).children {
+                        if let None = (*children.as_ptr()).get(k) {
+                            let mut node;
+                            if k == endk {
+                                node = Some(
+                                    Box::leak(Box::new(TrieNode::leaf(k, key.clone(), val))).into(),
+                                )
+                            } else {
+                                node = Some(Box::leak(Box::new(TrieNode::<T>::new(k))).into());
+                            }
+                            (*children.as_ptr()).set(k, node);
+                            cur = node;
+                            continue;
+                        }
+                        cur = (*children.as_ptr()).get(k);
+                    }
                 }
-                cur = (*cur).children.as_ref().unwrap().get(k)?;
             }
         }
         Ok(())
@@ -100,12 +121,21 @@ where
         if key.len() != self.key_size {
             return Err(TrieError::new(1, "key size not expect"));
         }
-        let mut cur = &self.root as *const TrieNode<T>;
-        for k in key {
-            unsafe {
-                cur = (*cur).children.as_ref().unwrap().get(k)?;
-                if (*cur).key.len() > 0 {
-                    return Ok((*cur).val);
+        unsafe {
+            let mut cur = self.root;
+            if let Some(cur_node) = self.root {
+                for k in key {
+                    if let Some(children) = (*cur_node.as_ptr()).children {
+                        let node = (*children.as_ptr()).get(k);
+                        if let Some(node_v) = node {
+                            if let Some(val) = (*node_v.as_ptr()).val {
+                                return Ok(val);
+                            }
+                        }
+                        cur = node;
+                        continue;
+                    }
+                    break;
                 }
             }
         }

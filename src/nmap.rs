@@ -1,14 +1,10 @@
-use crate::error::TrieError;
-use crate::trie::Container;
-use crate::TrieNode;
+use crate::{trie::Container, trie::TrieNode};
 use std::fmt::Debug;
+use std::ptr::NonNull;
 
 #[derive(Debug)]
-pub struct Nmap<T>
-where
-    T: Default + Copy,
-{
-    buckets: [*const TrieNode<T>; 10],
+pub struct Nmap<T> {
+    buckets: [Option<NonNull<TrieNode<T>>>; 10],
 }
 
 impl<T> std::fmt::Display for Nmap<T>
@@ -18,15 +14,15 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut msg = String::from("[");
         for i in 0..10 {
-            let mut a = String::from("");
-            if self.buckets[i].is_null() {
-                a = String::from("null")
+            let mut a: String = String::from("");
+            if let Some(node) = self.buckets[i] {
+                a = format!("{}", node.as_ptr() as u8);
             } else {
-                a = format!("{}", self.buckets[i] as u8);
+                a = String::from("null")
             }
-            msg = format!("{},{}", msg, a);
+            msg = format!("{},{},", msg, a);
         }
-        write!(f, "{}]", msg);
+        write!(f, "{}]", msg)?;
         Ok(())
     }
 }
@@ -37,30 +33,15 @@ where
 {
     fn new() -> Nmap<T> {
         Nmap {
-            buckets: [
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-                std::ptr::null(),
-            ],
+            buckets: [None, None, None, None, None, None, None, None, None, None],
         }
     }
-    fn get(&self, k: u8) -> Result<*const TrieNode<T>, TrieError> {
-        let v = self.buckets[k as usize];
-        if v.is_null() {
-            return Err(TrieError::new(1, "not found"));
-        }
-        return Ok(v);
+    fn get(&self, k: u8) -> Option<NonNull<TrieNode<T>>> {
+        self.buckets[k as usize]
     }
 
-    fn set(&mut self, k: u8, v: TrieNode<T>) {
-        self.buckets[k as usize] = &v as *const TrieNode<T>;
+    fn set(&mut self, k: u8, v: Option<NonNull<TrieNode<T>>>) {
+        self.buckets[k as usize] = v;
         ()
     }
 }
