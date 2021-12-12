@@ -29,26 +29,58 @@ impl<T> Container<T> for Nmap<T> {
         }
     }
     fn get(&self, k: u8) -> Option<NonNull<TrieNode<T>>> {
+        if k > 9 {
+            return None;
+        }
         self.buckets[k as usize]
     }
 
-    fn set(&mut self, k: u8, v: Option<NonNull<TrieNode<T>>>) {
-        self.buckets[k as usize] = v;
+    fn set(&mut self, k: u8, v: NonNull<TrieNode<T>>) {
+        if k > 9 {
+            return;
+        }
+        unsafe {
+            if let Some(prev) = self.prev(k) {
+                (*prev.as_ptr()).next = Some(v);
+                (*v.as_ptr()).prev = Some(prev);
+            }
+            if let Some(next) = self.next(k) {
+                (*next.as_ptr()).prev = Some(v);
+                (*v.as_ptr()).next = Some(next);
+            }
+            self.buckets[k as usize] = Some(v);
+        }
         ()
     }
     fn del(&mut self, k: u8) -> bool {
-        if let Some(node) = self.buckets[k as usize] {
-            self.buckets[k as usize] = None;
-            return true;
+        if k > 9 {
+            return false;
+        }
+        unsafe {
+            if let Some(node) = self.buckets[k as usize] {
+                let prev = (*node.as_ptr()).prev;
+                let next = (*node.as_ptr()).next;
+                if let Some(p) = prev {
+                    (*p.as_ptr()).next = next
+                }
+                if let Some(n) = (*node.as_ptr()).next {
+                    (*n.as_ptr()).prev = prev
+                }
+                self.buckets[k as usize] = None;
+                return true;
+            }
         }
         false
     }
     fn prev(&self, k: u8) -> Option<NonNull<TrieNode<T>>> {
-        let k = (k - 1) as usize;
-        let mut i = k;
-        while i < k {
-            if !self.buckets[i].is_none() {
-                return self.buckets[i];
+        if k > 10 {
+            return None;
+        }
+        let k = k - 1;
+        let mut i = k as i8;
+        while i >= 0 {
+            if !self.buckets[i as usize].is_none() {
+                return self.buckets[i as usize];
             }
             i -= 1;
         }
@@ -56,8 +88,11 @@ impl<T> Container<T> for Nmap<T> {
     }
 
     fn next(&self, k: u8) -> Option<NonNull<TrieNode<T>>> {
+        if k > 9 {
+            return None;
+        }
         let k = (k + 1) as usize;
-        for i in k + 1..10 {
+        for i in k..10 {
             if !self.buckets[i].is_none() {
                 return self.buckets[i];
             }
@@ -65,6 +100,9 @@ impl<T> Container<T> for Nmap<T> {
         None
     }
     fn is_head(&self, k: u8) -> bool {
+        if k > 9 {
+            return false;
+        }
         let k = k as usize;
         for i in 0..10 {
             if !self.buckets[i].is_none() {
@@ -74,7 +112,12 @@ impl<T> Container<T> for Nmap<T> {
         false
     }
     fn head(&self) -> Option<NonNull<TrieNode<T>>> {
-        self.next(255)
+        for i in 0..10 {
+            if !self.buckets[i].is_none() {
+                return self.buckets[i];
+            }
+        }
+        None
     }
 
     fn is_tail(&self, k: u8) -> bool {

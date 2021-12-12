@@ -6,6 +6,8 @@ use trie::Trie;
 
 #[cfg(test)]
 mod tests {
+    use std::vec;
+
     use crate::trie::Trie;
 
     #[test]
@@ -16,8 +18,10 @@ mod tests {
     #[test]
     fn test_trie() {
         let mut trie = Trie::new(3);
-        trie.set(vec![1, 2, 3], 123);
-        trie.set(vec![1, 2, 4], 124);
+        trie.set(vec![1, 2, 3], 123).unwrap();
+        trie.set(vec![1, 2, 4], 124).unwrap();
+        trie.set(vec![1, 2, 5], 125).unwrap();
+        trie.del(vec![1, 2, 5]);
 
         if let Ok(v1) = trie.get(vec![1, 2, 3]) {
             assert_eq!(v1, 123);
@@ -25,14 +29,14 @@ mod tests {
             assert_eq!(1, 2);
         }
 
-        if let Ok(v1) = trie.get(vec![1,2,4]) {
+        if let Ok(v1) = trie.get(vec![1, 2, 4]) {
             assert_eq!(v1, 124);
         } else {
             assert_eq!(1, 2);
         }
 
-        if let Ok(v1) = trie.get(vec![1,2,4]) {
-            assert_eq!(v1, 124);
+        if let Ok(v1) = trie.get(vec![1, 2, 5]) {
+            assert_eq!(v1, 15);
         } else {
             assert_eq!(1, 1);
         }

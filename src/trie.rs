@@ -1,11 +1,12 @@
 use crate::error::TrieError;
 use crate::nmap::Nmap;
+use std::borrow::BorrowMut;
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 use std::{fmt, mem};
 pub trait Container<T> {
     fn new() -> Self;
-    fn set(&mut self, k: u8, v: Option<NonNull<TrieNode<T>>>);
+    fn set(&mut self, k: u8, v: NonNull<TrieNode<T>>);
     fn get(&self, k: u8) -> Option<NonNull<TrieNode<T>>>;
     fn del(&mut self, k: u8) -> bool;
     fn prev(&self, k: u8) -> Option<NonNull<TrieNode<T>>>;
@@ -19,13 +20,23 @@ pub trait Container<T> {
 }
 
 pub struct TrieNode<T> {
-    key: Option<Vec<u8>>,
-    node_key: u8,
-    val: Option<T>,
-    prev: Option<NonNull<TrieNode<T>>>,
-    next: Option<NonNull<TrieNode<T>>>,
-    children: Option<NonNull<Nmap<T>>>,
+    pub key: Option<Vec<u8>>,
+    pub node_key: u8,
+    pub val: Option<T>,
+    pub prev: Option<NonNull<TrieNode<T>>>,
+    pub next: Option<NonNull<TrieNode<T>>>,
+    pub children: Option<NonNull<Nmap<T>>>,
 }
+
+// impl<T> Drop for TrieNode<T> {
+//     fn drop(&mut self) {
+//         self.children = None;
+//         self.prev = None;
+//         self.next = None;
+//         self.val = None;
+//         self.key = None;
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub struct Trie<T> {
@@ -105,7 +116,10 @@ impl<T: fmt::Debug> fmt::Debug for IntoIter<T> {
     }
 }
 
-impl<T> TrieNode<T> {
+impl<T> TrieNode<T>
+where
+    T: Clone,
+{
     pub fn root() -> TrieNode<T> {
         TrieNode {
             node_key: 0,
@@ -166,32 +180,74 @@ where
 
         unsafe {
             let mut cur = self.root;
-            if let Some(cur_node) = cur {
-                for k in key.clone() {
-                    if let Some(children) = (*cur_node.as_ptr()).children {
-                        let opt_node = (*children.as_ptr()).get(k);
-                        if let None = opt_node {
-                            let node;
+            for k in key.clone() {
+                if let Some(cur_ptr) = cur {
+                    if let Some(children_ptr) = (*cur_ptr.as_ptr()).children {
+                        let children = (*children_ptr.as_ptr()).borrow_mut();
+
+                        let node = children.get(k);
+                        if let None = node {
+                            let node_ptr;
                             if k == endk {
-                                node = Some(
-                                    Box::leak(Box::new(TrieNode::leaf(
-                                        k,
-                                        key.clone(),
-                                        val.clone(),
-                                    )))
-                                    .into(),
-                                )
+                                node_ptr = Box::leak(Box::new(TrieNode::leaf(
+                                    k,
+                                    key.clone(),
+                                    val.clone(),
+                                )))
+                                .into();
                             } else {
-                                node = Some(Box::leak(Box::new(TrieNode::<T>::new(k))).into());
+                                node_ptr = Box::leak(Box::new(TrieNode::<T>::new(k))).into();
                             }
-                            (*children.as_ptr()).set(k, node);
-                            let child_tail = (*children.as_ptr()).tail();
+                            children.set(k, node_ptr);
+                            if children.is_tail(k) {
+                                if let Some(next) = (*cur_ptr.as_ptr()).next {
+                                    if let Some(next_children) = (*next.as_ptr()).children {
+                                        if let Some(next_head) = (*next_children.as_ptr()).head() {
+                                            (*next_head.as_ptr()).prev = Some(node_ptr);
+                                            (*node_ptr.as_ptr()).next = Some(next_head);
+                                        }
+                                    }
+                                }
+                            }
+                            if children.is_head(k) {
+                                if let Some(prev) = (*cur_ptr.as_ptr()).prev {
+                                    if let Some(prev_children) = (*prev.as_ptr()).children {
+                                        if let Some(prev_tail) = (*prev_children.as_ptr()).tail() {
+                                            (*prev_tail.as_ptr()).next = Some(node_ptr);
+                                            (*node_ptr.as_ptr()).prev = Some(prev);
+                                        }
+                                    }
+                                }
+                            }
+                            cur = Some(node_ptr);
+                            continue;
+                        } else {
                             cur = node;
                             continue;
                         }
-                        cur = opt_node
                     }
-                    break;
+                    return Err(TrieError::new(2, "trie stucture fail"));
+                }
+                return Err(TrieError::new(2, "trie stucture fail"));
+            }
+            if self.head.is_none() {
+                self.head = cur;
+                self.tail = cur;
+            } else {
+                if let Some(head) = self.head {
+                    if !(*head.as_ptr()).prev.is_none() {
+                        if (*head.as_ptr()).prev == cur {
+                            self.head = cur;
+                        }
+                    }
+                }
+
+                if let Some(tail) = self.tail {
+                    if !(*tail.as_ptr()).next.is_none() {
+                        if Some((*tail.as_ptr()).next) == Some(cur) {
+                            self.tail = cur;
+                        }
+                    }
                 }
             }
         }
@@ -204,9 +260,9 @@ where
         }
         unsafe {
             let mut cur = self.root;
-            if let Some(cur_node) = cur {
-                for k in key {
-                    if let Some(children) = (*cur_node.as_ptr()).children {
+            for k in key {
+                if let Some(cur_ptr) = cur {
+                    if let Some(children) = (*cur_ptr.as_ptr()).children {
                         let node = (*children.as_ptr()).get(k);
                         if let Some(node_v) = node {
                             if let Some(val) = (*node_v.as_ptr()).val.clone() {
@@ -223,5 +279,54 @@ where
         return Err(TrieError::new(2, "not found"));
     }
 
-    pub fn del(&mut self, key: Vec<u8>) {}
+    pub fn del(&mut self, key: Vec<u8>) -> bool {
+        if self.key_size != key.len() {
+            return false;
+        }
+        let mut stack = std::collections::LinkedList::<NonNull<TrieNode<T>>>::new();
+
+        unsafe {
+            let mut cur = self.root;
+            for k in key {
+                if let Some(cur_ptr) = cur {
+                    if let Some(children) = (*cur_ptr.as_ptr()).children {
+                        let node = (*children.as_ptr()).get(k);
+                        if let Some(node_v) = node {
+                            if !(*node_v.as_ptr()).val.is_none() {
+                                if let Some(n) = stack.pop_back() {
+                                    if let Some(children) = (*n.as_ptr()).children {
+                                        (*children.as_ptr()).del(k);
+                                    }
+                                    stack.push_back(n);
+                                }
+                            } else {
+                                stack.push_back(node_v);
+                            }
+                        }
+                        cur = node;
+                        continue;
+                    }
+                    return false;
+                }
+                return false;
+            }
+            loop {
+                if let Some(n) = stack.pop_back() {
+                    if let Some(children) = (*n.as_ptr()).children {
+                        if (*children.as_ptr()).head().is_none() {
+                            if let Some(temp) = stack.pop_back() {
+                                if let Some(children) = (*temp.as_ptr()).children {
+                                    (*children.as_ptr()).del((*n.as_ptr()).node_key);
+                                }
+                                stack.push_back(temp);
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        true
+    }
 }
