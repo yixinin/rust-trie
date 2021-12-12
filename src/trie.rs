@@ -1,17 +1,21 @@
-#![allow(unused_variables)]
 use crate::error::TrieError;
 use crate::nmap::Nmap;
-use std::borrow::BorrowMut;
-use std::fmt::Debug;
+use std::marker::PhantomData;
 use std::ptr::NonNull;
-
-pub trait Container<T>: Debug
-where
-    T: Default + Copy,
-{
+use std::{fmt, mem};
+pub trait Container<T> {
     fn new() -> Self;
     fn set(&mut self, k: u8, v: Option<NonNull<TrieNode<T>>>);
     fn get(&self, k: u8) -> Option<NonNull<TrieNode<T>>>;
+    fn del(&mut self, k: u8) -> bool;
+    fn prev(&self, k: u8) -> Option<NonNull<TrieNode<T>>>;
+    fn next(&self, k: u8) -> Option<NonNull<TrieNode<T>>>;
+    fn is_head(&self, k: u8) -> bool;
+    fn head(&self) -> Option<NonNull<TrieNode<T>>>;
+    fn is_tail(&self, k: u8) -> bool;
+    fn tail(&self) -> Option<NonNull<TrieNode<T>>>;
+    fn keys(&self) -> Vec<u8>;
+    fn pad() -> u8;
 }
 
 pub struct TrieNode<T> {
@@ -23,10 +27,85 @@ pub struct TrieNode<T> {
     children: Option<NonNull<Nmap<T>>>,
 }
 
-impl<T> TrieNode<T>
-where
-    T: Default + Copy + std::fmt::Debug,
-{
+#[derive(Debug, Clone)]
+pub struct Trie<T> {
+    key_size: usize,
+    root: Option<NonNull<TrieNode<T>>>,
+    head: Option<NonNull<TrieNode<T>>>,
+    tail: Option<NonNull<TrieNode<T>>>,
+    size: usize,
+    marker: PhantomData<TrieNode<T>>,
+}
+
+#[must_use = "iterators are lazy and do nothing unless consumed"]
+pub struct Iter<'a, T: 'a> {
+    key_size: usize,
+    root: Option<NonNull<TrieNode<T>>>,
+    head: Option<NonNull<TrieNode<T>>>,
+    tail: Option<NonNull<TrieNode<T>>>,
+    size: usize,
+    marker: PhantomData<&'a TrieNode<T>>,
+}
+
+impl<T: fmt::Debug> fmt::Debug for Iter<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Iter")
+            .field(&*mem::ManuallyDrop::new(Trie {
+                key_size: self.key_size,
+                root: self.root,
+                head: self.head,
+                tail: self.tail,
+                size: self.size,
+                marker: PhantomData,
+            }))
+            .field(&self.size)
+            .finish()
+    }
+}
+
+impl<T> Clone for Iter<'_, T> {
+    fn clone(&self) -> Self {
+        Iter { ..*self }
+    }
+}
+
+pub struct IterMut<'a, T: 'a> {
+    key_size: usize,
+    root: Option<NonNull<TrieNode<T>>>,
+    head: Option<NonNull<TrieNode<T>>>,
+    tail: Option<NonNull<TrieNode<T>>>,
+    size: usize,
+    marker: PhantomData<&'a mut TrieNode<T>>,
+}
+
+impl<T: fmt::Debug> fmt::Debug for IterMut<'_, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("IterMut")
+            .field(&*mem::ManuallyDrop::new(Trie {
+                key_size: self.key_size,
+                root: self.root,
+                head: self.head,
+                tail: self.tail,
+                size: self.size,
+                marker: PhantomData,
+            }))
+            .field(&self.size)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
+pub struct IntoIter<T> {
+    list: Trie<T>,
+}
+
+impl<T: fmt::Debug> fmt::Debug for IntoIter<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("IntoIter").field(&self.list).finish()
+    }
+}
+
+impl<T> TrieNode<T> {
     pub fn root() -> TrieNode<T> {
         TrieNode {
             node_key: 0,
@@ -57,22 +136,15 @@ where
             children: None,
         }
     }
-}
 
-pub struct Trie<T>
-where
-    T: Copy + Default,
-{
-    key_size: usize,
-    root: Option<NonNull<TrieNode<T>>>,
-    head: Option<NonNull<TrieNode<T>>>,
-    tail: Option<NonNull<TrieNode<T>>>,
-    size: usize,
+    pub fn into_val(self: Box<Self>) -> Option<T> {
+        self.val
+    }
 }
 
 impl<T> Trie<T>
 where
-    T: Copy + Clone + Default + std::fmt::Debug,
+    T: Clone,
 {
     pub fn new(key_size: usize) -> Trie<T> {
         Trie {
@@ -81,6 +153,7 @@ where
             head: None,
             tail: None,
             size: 0,
+            marker: PhantomData,
         }
     }
 
@@ -93,24 +166,32 @@ where
 
         unsafe {
             let mut cur = self.root;
-            if let Some(mut cur_node) = self.root {
+            if let Some(cur_node) = cur {
                 for k in key.clone() {
-                    if let Some(mut children) = (*cur_node.as_ptr()).children {
-                        if let None = (*children.as_ptr()).get(k) {
-                            let mut node;
+                    if let Some(children) = (*cur_node.as_ptr()).children {
+                        let opt_node = (*children.as_ptr()).get(k);
+                        if let None = opt_node {
+                            let node;
                             if k == endk {
                                 node = Some(
-                                    Box::leak(Box::new(TrieNode::leaf(k, key.clone(), val))).into(),
+                                    Box::leak(Box::new(TrieNode::leaf(
+                                        k,
+                                        key.clone(),
+                                        val.clone(),
+                                    )))
+                                    .into(),
                                 )
                             } else {
                                 node = Some(Box::leak(Box::new(TrieNode::<T>::new(k))).into());
                             }
                             (*children.as_ptr()).set(k, node);
+                            let child_tail = (*children.as_ptr()).tail();
                             cur = node;
                             continue;
                         }
-                        cur = (*children.as_ptr()).get(k);
+                        cur = opt_node
                     }
+                    break;
                 }
             }
         }
@@ -123,12 +204,12 @@ where
         }
         unsafe {
             let mut cur = self.root;
-            if let Some(cur_node) = self.root {
+            if let Some(cur_node) = cur {
                 for k in key {
                     if let Some(children) = (*cur_node.as_ptr()).children {
                         let node = (*children.as_ptr()).get(k);
                         if let Some(node_v) = node {
-                            if let Some(val) = (*node_v.as_ptr()).val {
+                            if let Some(val) = (*node_v.as_ptr()).val.clone() {
                                 return Ok(val);
                             }
                         }
@@ -141,4 +222,6 @@ where
         }
         return Err(TrieError::new(2, "not found"));
     }
+
+    pub fn del(&mut self, key: Vec<u8>) {}
 }
