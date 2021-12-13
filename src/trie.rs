@@ -1,4 +1,4 @@
-use crate::error::{TrieError, ErrorKind};
+use crate::error::{ErrorKind, TrieError};
 use crate::nmap::Nmap;
 use std::borrow::BorrowMut;
 use std::marker::PhantomData;
@@ -328,5 +328,41 @@ where
             }
         }
         true
+    }
+
+    pub fn gt(&self, key: Vec<u8>) -> Option<T> {
+        self._gt(key, false)
+    }
+
+    pub fn gte(&self, key: Vec<u8>) -> Option<T> {
+        self._gt(key, false)
+    }
+
+    pub fn _gt(&self, key: Vec<u8>, eq: bool) -> Option<T> {
+        unsafe {
+            let mut cur = self.root;
+            for k in key {
+                if let Some(cur_ptr) = cur {
+                    if let Some(children) = (*cur_ptr.as_ptr()).children {
+                        let node = (*children.as_ptr()).get(k);
+                        if let Some(node_v) = node {
+                            if let Some(val) = (*node_v.as_ptr()).val.clone() {
+                                if eq {
+                                    return Some(val);
+                                } else {
+                                    if let Some(next_ptr) = (*node_v.as_ptr()).next {
+                                        return (*next_ptr.as_ptr()).val.clone();
+                                    }
+                                }
+                            }
+                        }
+                        cur = node;
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+        return None;
     }
 }
