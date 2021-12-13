@@ -1,4 +1,4 @@
-use crate::error::TrieError;
+use crate::error::{TrieError, ErrorKind};
 use crate::nmap::Nmap;
 use std::borrow::BorrowMut;
 use std::marker::PhantomData;
@@ -173,7 +173,7 @@ where
 
     pub fn set(&mut self, key: Vec<u8>, val: T) -> Result<(), TrieError> {
         if key.clone().len() != self.key_size {
-            return Err(TrieError::new(1, "key size not match"));
+            return Err(TrieError::from(ErrorKind::KeySizeNotMatch));
         }
 
         let endk = key.clone()[self.key_size - 1];
@@ -184,9 +184,8 @@ where
                 if let Some(cur_ptr) = cur {
                     if let Some(children_ptr) = (*cur_ptr.as_ptr()).children {
                         let children = (*children_ptr.as_ptr()).borrow_mut();
-
                         let node = children.get(k);
-                        if let None = node {
+                        if node.is_none() {
                             let node_ptr;
                             if k == endk {
                                 node_ptr = Box::leak(Box::new(TrieNode::leaf(
@@ -220,33 +219,34 @@ where
                                 }
                             }
                             cur = Some(node_ptr);
-                            continue;
                         } else {
                             cur = node;
-                            continue;
                         }
+                        continue;
                     }
-                    return Err(TrieError::new(2, "trie stucture fail"));
+                    return Err(TrieError::from(ErrorKind::Unexpect));
                 }
-                return Err(TrieError::new(2, "trie stucture fail"));
+                return Err(TrieError::from(ErrorKind::Unexpect));
             }
+
             if self.head.is_none() {
                 self.head = cur;
                 self.tail = cur;
-            } else {
-                if let Some(head) = self.head {
-                    if !(*head.as_ptr()).prev.is_none() {
-                        if (*head.as_ptr()).prev == cur {
-                            self.head = cur;
-                        }
+                return Ok(());
+            }
+
+            if let Some(head) = self.head {
+                if !(*head.as_ptr()).prev.is_none() {
+                    if (*head.as_ptr()).prev == cur {
+                        self.head = cur;
                     }
                 }
+            }
 
-                if let Some(tail) = self.tail {
-                    if !(*tail.as_ptr()).next.is_none() {
-                        if Some((*tail.as_ptr()).next) == Some(cur) {
-                            self.tail = cur;
-                        }
+            if let Some(tail) = self.tail {
+                if !(*tail.as_ptr()).next.is_none() {
+                    if Some((*tail.as_ptr()).next) == Some(cur) {
+                        self.tail = cur;
                     }
                 }
             }
@@ -256,7 +256,7 @@ where
 
     pub fn get(&self, key: Vec<u8>) -> Result<T, TrieError> {
         if key.len() != self.key_size {
-            return Err(TrieError::new(1, "key size not expect"));
+            return Err(TrieError::from(ErrorKind::KeySizeNotMatch));
         }
         unsafe {
             let mut cur = self.root;
@@ -276,7 +276,7 @@ where
                 }
             }
         }
-        return Err(TrieError::new(2, "not found"));
+        return Err(TrieError::from(ErrorKind::Notfound));
     }
 
     pub fn del(&mut self, key: Vec<u8>) -> bool {
