@@ -2,11 +2,11 @@ pub mod error;
 pub mod nmap;
 pub mod trie;
 
-use trie::Trie;
-
 #[cfg(test)]
 mod tests {
     use std::vec;
+
+    use bson::oid::ObjectId;
 
     use crate::trie::Trie;
 
@@ -17,28 +17,25 @@ mod tests {
     }
     #[test]
     fn test_trie() {
-        let mut trie = Trie::new(3);
-        trie.set(vec![1, 2, 3], 123).unwrap();
-        trie.set(vec![1, 2, 4], 124).unwrap();
-        trie.set(vec![1, 2, 5], 125).unwrap();
-        trie.del(vec![1, 2, 5]);
-
-        if let Ok(v1) = trie.get(vec![1, 2, 3]) {
-            assert_eq!(v1, 123);
-        } else {
-            assert_eq!(1, 2);
+        let size = 10000000;
+        let mut trie = Trie::new(12);
+        let mut keys = Vec::with_capacity(size);
+        for i in 0..size {
+            let key = ObjectId::new().bytes().to_vec();
+            if let Err(err) = trie.set(key.clone(), key.clone()) {
+                println!("{}", err);
+                return;
+            }
+            keys.push(key)
         }
 
-        if let Ok(v1) = trie.get(vec![1, 2, 4]) {
-            assert_eq!(v1, 124);
-        } else {
-            assert_eq!(1, 2);
-        }
-
-        if let Ok(v1) = trie.get(vec![1, 2, 5]) {
-            assert_eq!(v1, 15);
-        } else {
-            assert_eq!(1, 1);
+        for i in 0..size {
+            let key = keys[i].clone();
+            if let Ok(v1) = trie.get(key.clone()) {
+                assert_eq!(v1, key.clone());
+            } else {
+                assert_eq!(1, 2);
+            }
         }
     }
 }

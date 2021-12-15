@@ -121,10 +121,10 @@ impl<T> Container<T> for Nmap<T> {
     }
 
     fn is_tail(&self, k: u8) -> bool {
-        let k = k as usize;
-        let mut i = 9;
+        let k = k as i16;
+        let mut i = 9 as i16;
         while i < k {
-            if !self.buckets[i].is_none() {
+            if !self.buckets[i as usize].is_none() {
                 return i == k;
             }
             i -= 1;
@@ -138,7 +138,7 @@ impl<T> Container<T> for Nmap<T> {
     fn keys(&self) -> Vec<u8> {
         let mut keys = Vec::with_capacity(10);
         for i in 0..10 {
-            if let Some(node) = self.buckets[i] {
+            if let Some(_) = self.buckets[i] {
                 keys.push(i as u8)
             }
         }
