@@ -1,6 +1,7 @@
 pub mod error;
 pub mod nmap;
 pub mod trie;
+pub mod byte_map;
 
 #[cfg(test)]
 mod tests {
